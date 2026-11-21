@@ -208,5 +208,17 @@ export async function GET() {
     out.serviceAwake = false;
   }
 
+  // ---------- (5) البوت الحي: filter_stats (طلبات منشورة/مفحوصة — أرقام حقيقية) ----------
+  const fd = await jget(`${SERVICE_URL}/api/filter_stats`, 12000);
+  if (fd && fd.status === 200) {
+    const fj = fd.json as { db_stats?: { total?: number; accepts?: number; rejects?: number } } | null;
+    const dbs = fj?.db_stats || {};
+    out.filter = {
+      seen: dbs.total ?? null,
+      accepted: dbs.accepts ?? null,
+      rejected: dbs.rejects ?? null,
+    };
+  }
+
   return NextResponse.json(out);
 }

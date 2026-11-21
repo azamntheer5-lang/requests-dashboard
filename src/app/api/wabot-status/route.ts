@@ -2,7 +2,15 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const SERVICE_URL = (process.env.RENDER_SERVICE_URL || "https://um-raham-bot.onrender.com").replace(/\/$/, "");
+// الخدمة الحية بعد ترحيل 2026-11-20 هي whatsapp-userbot-e3fy2.
+// الافتراضي القديم كان um-raham-bot (موقوف الآن من المالك) فتظهر لوحة
+// الحالة بيانات خدمة ميتة — الترتيب: RENDER_SERVICE_URL ثم E3FY2_SERVICE_URL
+// ثم النطاق الحي مباشرة.
+const SERVICE_URL = (
+  process.env.RENDER_SERVICE_URL ||
+  process.env.E3FY2_SERVICE_URL ||
+  "https://whatsapp-userbot-e3fy2.onrender.com"
+).replace(/\/$/, "");
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const SUPA_BASE = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const SUPA_KEY = process.env.SUPABASE_SERVICE_KEY || "";
@@ -53,7 +61,7 @@ export async function GET() {
         })
       : Promise.resolve(null);
   const ghPromise: Promise<FetchResult> = GH_TOKEN
-    ? jget("https://api.github.com/repos/azamntheer5-lang/Bot/branches/main", 9000, {
+    ? jget("https://api.github.com/repos/azamntheer5-lang/whatsapp-link-monitor/branches/main", 9000, {
           Authorization: `Bearer ${GH_TOKEN}`,
           Accept: "application/vnd.github+json",
         })

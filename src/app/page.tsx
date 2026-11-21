@@ -5,10 +5,8 @@ import {
   Activity,
   ArrowLeft,
   BadgeCheck,
-  Check,
   CheckCircle2,
   Copy,
-  Database,
   ExternalLink,
   Eye,
   EyeOff,
@@ -67,6 +65,7 @@ type FleetData = {
   watchers?: FleetWatcher[];
   recentLinks?: RecentLink[];
   linksTotal?: number;
+  filter?: { seen: number | null; accepted: number | null; rejected: number | null };
   monitored?: {
     total: number;
     awake: boolean;
@@ -720,7 +719,6 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
   const [loading, setLoading] = useState(true);
   const [bumped, setBumped] = useState<Record<string, number>>({});
   const prevRef = useRef<{ perPhone?: Record<string, { reader: number }>; total?: number; seenIds?: Set<number> }>({});
-  const [linksCopied, setLinksCopied] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -874,25 +872,16 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
           <Card className="border-zinc-800 bg-zinc-900/40">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-zinc-400">روابط مؤرشفة</p>
-                <Database className="h-4 w-4 text-emerald-500" />
+                <p className="text-xs font-bold text-zinc-400">طلبات منشورة</p>
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
               </div>
               <p className="mt-1 text-3xl font-extrabold text-emerald-400">
-                {data?.linksTotal != null ? data.linksTotal.toLocaleString("en") : "—"}
+                {data?.filter?.accepted ?? "—"}
               </p>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (await copyText(String(data?.linksTotal ?? ""))) {
-                    setLinksCopied(true);
-                    setTimeout(() => setLinksCopied(false), 1500);
-                  }
-                }}
-                className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500 transition hover:text-zinc-300"
-              >
-                {linksCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                من جدول links في سوبابس
-              </button>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                من {data?.filter?.seen != null ? data.filter.seen.toLocaleString("en") : "—"} رسالة مفحوصة ·{" "}
+                {data?.filter?.rejected != null ? data.filter.rejected.toLocaleString("en") : "—"} مرفوضة
+              </p>
             </CardContent>
           </Card>
           <Card className="border-zinc-800 bg-zinc-900/40">
@@ -1090,9 +1079,9 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Link2 className="h-4 w-4 text-emerald-400" />
-                آخر الروابط المؤرشفة
+                آخر الروابط — أرشيف النسخة السابقة
               </CardTitle>
-              <CardDescription>من جدول links في سوبابس — أرشيف دائم</CardDescription>
+              <CardDescription>بيانات تاريخية من جدول links — للمرجع فقط</CardDescription>
             </CardHeader>
             <CardContent>
               {(data?.recentLinks?.length ?? 0) === 0 ? (

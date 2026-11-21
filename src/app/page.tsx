@@ -184,7 +184,7 @@ function PublicRegistration({ onOpenLock }: { onOpenLock: () => void }) {
   const [step, setStep] = useState<"phone" | "code" | "password" | "done">("phone");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: "err" | "info"; text: string } | null>(null);
-  const [doneInfo, setDoneInfo] = useState<{ groups: number; instant: boolean; name: string } | null>(null);
+  const [doneInfo, setDoneInfo] = useState<{ groups: number; instant: boolean; name: string; channel: string } | null>(null);
 
   const c = COUNTRIES.find((x) => x.code === country)!;
   const fullPhone = c.dial + phoneTail.replace(/\D/g, "");
@@ -225,7 +225,7 @@ function PublicRegistration({ onOpenLock }: { onOpenLock: () => void }) {
       });
       const r = (await res.json()) as JoinStartResult;
       if (r.ok && r.status === "joined") {
-        setDoneInfo({ groups: 0, instant: true, name: r.name || "" });
+        setDoneInfo({ groups: 0, instant: true, name: r.name || "", channel: r.channel_link || "" });
         setStep("done");
         toast.success("تم ضمك للقناة فورًا — أهلًا بك!");
       } else if (r.ok && r.status === "code_sent") {
@@ -256,7 +256,7 @@ function PublicRegistration({ onOpenLock }: { onOpenLock: () => void }) {
       });
       const r = (await res.json()) as JoinVerifyResult;
       if (r.ok && r.status === "joined") {
-        setDoneInfo({ groups: r.groups_added ?? 0, instant: false, name: r.name || "" });
+        setDoneInfo({ groups: r.groups_added ?? 0, instant: false, name: r.name || "", channel: r.channel_link || "" });
         setStep("done");
         toast.success(`تم ضمك للقناة! ${r.groups_added ? `ووصلت ${r.groups_added} مجموعة للمراقبة` : ""}`);
       } else if (r.status === "need_password") {
@@ -533,17 +533,25 @@ function PublicRegistration({ onOpenLock }: { onOpenLock: () => void }) {
                     <p className="mt-0.5 text-xs text-zinc-400">مجموعة وصلت للمراقبة</p>
                   </div>
                 </div>
-                <Button
-                  asChild
-                  className="h-12 w-full gap-2 bg-emerald-700 text-base font-bold text-white hover:bg-emerald-600"
-                >
-                  <a href="https://t.me/" target="_blank" rel="noreferrer">
-                    <Send className="h-5 w-5" />
-                    افتح تيليجرام
-                  </a>
-                </Button>
+                {doneInfo.channel ? (
+                  <Button
+                    asChild
+                    className="h-12 w-full gap-2 bg-emerald-700 text-base font-bold text-white hover:bg-emerald-600"
+                  >
+                    <a href={doneInfo.channel} target="_blank" rel="noreferrer">
+                      <Send className="h-5 w-5" />
+                      افتح تيليجرام — ادخل القناة
+                    </a>
+                  </Button>
+                ) : (
+                  <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-3 text-center text-xs leading-5 text-amber-300">
+                    تم تجهيز حسابك — سيصلك رابط القناة في تيليجرام تلقائيًا، أو تواصل مع الإدارة ليرسله لك مباشرة.
+                  </div>
+                )}
                 <p className="text-xs leading-5 text-zinc-500">
-                  افتح تطبيق تيليجرام — ستجد القناة في قنواتك، وكل طلب جديد يصلك فورًا مع زر مراسلة صاحب الطلب.
+                  {doneInfo.channel
+                    ? "اضغط الزر ليفتح تيليجرام صفحة القناة — اضغط انضمام وستجد كل طلب جديد يصلك فورًا مع زر مراسلة صاحب الطلب."
+                    : "افتح تطبيق تيليجرام — ستجد القناة في قنواتك، وكل طلب جديد يصلك فورًا مع زر مراسلة صاحب الطلب."}
                 </p>
               </div>
             )}

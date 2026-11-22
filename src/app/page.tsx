@@ -10,8 +10,10 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  GitBranch,
   Globe2,
   Hash,
+  HelpCircle,
   KeyRound,
   Link2,
   Loader2,
@@ -20,10 +22,13 @@ import {
   MessageCircle,
   Phone,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
   Users,
+  Wifi,
+  WifiOff,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -80,6 +85,10 @@ type FleetData = {
     botConnected: boolean | null;
   } | null;
   serviceAwake?: boolean;
+  userClients?: Record<string, { connected: boolean | null; exact: boolean }>;
+  clientsInfo?: { total: number; connected: number; collisions: number };
+  gitCommit?: string | null;
+  python?: string | null;
 };
 
 type JoinStatus = {
@@ -154,6 +163,11 @@ function timeAgo(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `قبل ${h} ساعة`;
   return `قبل ${Math.floor(h / 24)} يوم`;
+}
+
+function fmt(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US");
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -710,7 +724,101 @@ function LockDialog({
 }
 
 // ============================================================
-// لوحة التحكم — الأسطول والمراقبة الحية
+// مكونات فاخرة صغيرة
+// ============================================================
+
+// حلقة تقدم SVG — نسبة الحسابات المتصلة
+function Ring({ value, max, label }: { value: number; max: number; label: string }) {
+  const size = 74;
+  const r = (size - 10) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = max > 0 ? Math.min(1, value / max) : 0;
+  return (
+    <div className="relative shrink-0" role="img" aria-label={label}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="6.5" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="url(#ringGrad)"
+          strokeWidth="6.5"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - pct)}
+          className="transition-all duration-1000 ease-out"
+        />
+        <defs>
+          <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#6ee7b7" />
+            <stop offset="100%" stopColor="#34d399" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-base font-extrabold leading-none text-emerald-300">{value}</span>
+        <span className="text-[10px] font-bold text-zinc-500">/ {max}</span>
+      </div>
+    </div>
+  );
+}
+
+// شريط بياني مصغّر — اكتشافات آخر 24 ساعة (12 دلو × ساعتين)
+function MiniHisto({ buckets }: { buckets: number[] }) {
+  const max = Math.max(1, ...buckets);
+  return (
+    <div className="flex h-10 items-end gap-[3px]" dir="rtl" aria-label="مواليد المجموعات خلال 24 ساعة">
+      {buckets.map((n, i) => (
+        <div
+          key={i}
+          title={`قبل ${24 - i * 2}-${24 - i * 2 - 2} ساعة: ${n} مجموعة`}
+          className={cn(
+            "flex-1 rounded-sm transition-all duration-700",
+            i === 0 ? "bg-gradient-to-t from-emerald-700 to-emerald-400" : "bg-emerald-800/60",
+          )}
+          style={{ height: `${Math.max(8, (n / max) * 100)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// بطاقة إحصاء فاخرة
+function LuxStat({
+  icon,
+  title,
+  value,
+  sub,
+  delay,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  value: React.ReactNode;
+  sub: React.ReactNode;
+  delay: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={cn("lux-card lux-in p-4", delay)}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-zinc-400">{title}</p>
+          <p className="mt-1 truncate text-3xl font-black tracking-tight text-emerald-300">{value}</p>
+        </div>
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-950/70 text-emerald-400 ring-1 ring-emerald-900/70">
+          {icon}
+        </div>
+      </div>
+      <div className="mt-1.5 text-xs leading-5 text-zinc-500">{sub}</div>
+      {children}
+    </div>
+  );
+}
+
+// ============================================================
+// لوحة التحكم — غرفة العمليات الفاخرة
 // ============================================================
 
 function FleetDashboard({ onRelock }: { onRelock: () => void }) {
@@ -718,7 +826,8 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
   const [join, setJoin] = useState<JoinStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [bumped, setBumped] = useState<Record<string, number>>({});
-  const prevRef = useRef<{ perPhone?: Record<string, { reader: number }>; total?: number; seenIds?: Set<number> }>({});
+  const [query, setQuery] = useState("");
+  const prevRef = useRef<{ perPhone?: Record<string, { reader: number }>; total?: number }>({});
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -775,41 +884,93 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
     return () => clearInterval(t);
   }, [fetchAll]);
 
+  // ── المشتقات ──
   const watchers = useMemo(() => data?.watchers ?? [], [data]);
   const perPhone = data?.monitored?.perPhone ?? {};
-  const monitors = watchers.filter((w) => w.role === "monitor");
-  const joiners = watchers.filter((w) => w.role === "joiner");
-  const totalReader = Object.values(perPhone).reduce((s, c) => s + c.reader, 0);
+  const userClients = data?.userClients ?? null;
+  const monitors = useMemo(() => watchers.filter((w) => w.role === "monitor"), [watchers]);
+  const joiners = useMemo(() => watchers.filter((w) => w.role === "joiner"), [watchers]);
   const awake = !!data?.serviceAwake;
 
+  // حالة الاتصال الحقيقية لكل حساب (من deploy_check عبر الرقم المقنّع)
+  const connOf = useCallback(
+    (phone: string): { connected: boolean | null; exact: boolean } | null => {
+      if (!userClients) return null;
+      return userClients[phone] ?? { connected: null, exact: false };
+    },
+    [userClients],
+  );
+
+  const connectedCount = monitors.filter((w) => connOf(w.phone)?.connected === true).length;
+  const offlineCount = monitors.filter((w) => connOf(w.phone)?.connected === false).length;
+  const unknownConn = monitors.length - connectedCount - offlineCount;
+  const newToday = data?.monitored?.recentGroups?.length ?? 0;
+  const joinTotal = (join?.totals?.instant_joins ?? 0) + (join?.totals?.otp_joins ?? 0);
+
+  // هيستوغرام الاكتشافات: 12 دلو × ساعتين (الفهرس 0 = الأحدث)
+  const histo = useMemo(() => {
+    const buckets = new Array(12).fill(0);
+    const now = Date.now();
+    for (const g of data?.monitored?.recentGroups ?? []) {
+      const t = Date.parse(g.at);
+      if (!Number.isFinite(t)) continue;
+      const hoursAgo = (now - t) / 3600000;
+      if (hoursAgo >= 0 && hoursAgo < 24) buckets[Math.min(11, Math.floor(hoursAgo / 2))] += 1;
+    }
+    return buckets;
+  }, [data?.monitored?.recentGroups]);
+
+  // الترتيب: المتصل أولًا ثم الأكثر قراءة
   const sorted = useMemo(
     () =>
       monitors
         .slice()
-        .sort(
-          (a, b) =>
-            (perPhone[b.phone]?.reader ?? 0) - (perPhone[a.phone]?.reader ?? 0) || Number(b.isActive) - Number(a.isActive),
-        ),
-    [monitors, perPhone],
+        .sort((a, b) => {
+          const ca = connOf(a.phone)?.connected;
+          const cb = connOf(b.phone)?.connected;
+          const sa = ca === true ? 2 : ca === false ? 0 : 1;
+          const sb = cb === true ? 2 : cb === false ? 0 : 1;
+          if (sa !== sb) return sb - sa;
+          return (perPhone[b.phone]?.reader ?? 0) - (perPhone[a.phone]?.reader ?? 0) || Number(b.isActive) - Number(a.isActive);
+        }),
+    [monitors, perPhone, connOf],
   );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter(
+      (w) => (w.displayName || "").toLowerCase().includes(q) || w.phone.replace(/\D/g, "").includes(q.replace(/\D/g, "")),
+    );
+  }, [sorted, query]);
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
-      {/* الترويسة */}
-      <header className="sticky top-0 z-20 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      {/* الترويسة اللاصقة */}
+      <header className="sticky top-0 z-30 border-b border-white/5 bg-zinc-950/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-950 text-emerald-400 ring-1 ring-emerald-900">
+            <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-950/80 text-emerald-400 ring-1 ring-emerald-800/70 lux-glow">
               <Activity className="h-5 w-5" />
+              {awake && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 lux-pulse" />}
             </div>
             <div>
-              <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">لوحة المراقبة — الأسطول</h1>
-              <p className="text-xs text-zinc-500">
-                مرتبطة مباشرة بسوبابس والبوت الحي · تحديث كل 12 ثانية
+              <h1 className="text-lg font-black tracking-tight sm:text-xl">
+                غرفة <span className="lux-grad-text">عمليات المراقبة</span>
+              </h1>
+              <p className="flex items-center gap-1.5 text-xs text-zinc-500">
+                <span className="inline-block h-1 w-1 rounded-full bg-emerald-500" />
+                بيانات حية من البوت وسوبابس · تحديث كل 12 ثانية
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {data?.gitCommit && (
+              <Badge variant="outline" className="gap-1 border-zinc-800 bg-black/40 font-mono text-[11px] text-zinc-400">
+                <GitBranch className="h-3 w-3 text-emerald-600" />
+                {data.gitCommit.slice(0, 7)}
+              </Badge>
+            )}
             <Badge
               variant="outline"
               className={cn(
@@ -840,317 +1001,420 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-6">
-        {/* بطاقات الإحصاء */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-zinc-400">مجموعات مراقبة</p>
-                <Hash className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="mt-1 text-3xl font-extrabold text-emerald-400">
-                {data?.monitored?.total != null ? data.monitored.total.toLocaleString("en") : "—"}
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                {data?.monitored?.awake ? "تحديث لحظي من البوت" : "آخر لقطة (البوت نائم)"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-zinc-400">حسابات متصلة</p>
-                <Users className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="mt-1 text-3xl font-extrabold text-emerald-400">
-                {data?.stats?.connectedAccounts ?? "—"}
-                <span className="text-base font-normal text-zinc-500"> / {data?.stats?.activeWatchers ?? watchers.length}</span>
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500">نشطة الآن من إجمالي المراقبين</p>
-            </CardContent>
-          </Card>
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-zinc-400">طلبات منشورة</p>
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="mt-1 text-3xl font-extrabold text-emerald-400">
-                {data?.filter?.accepted ?? "—"}
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                من {data?.filter?.seen != null ? data.filter.seen.toLocaleString("en") : "—"} رسالة مفحوصة ·{" "}
-                {data?.filter?.rejected != null ? data.filter.rejected.toLocaleString("en") : "—"} مرفوضة
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-zinc-400">انضمامات</p>
-                <Zap className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="mt-1 text-3xl font-extrabold text-emerald-400">
-                {(join?.totals?.instant_joins ?? 0) + (join?.totals?.otp_joins ?? 0)}
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                فوري {join?.totals?.instant_joins ?? 0} · بالكود {join?.totals?.otp_joins ?? 0} · مجموعات مضمومة{" "}
-                {join?.totals?.groups_added ?? 0}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* إجابة السؤال: هل يجب اتصال الحسابات؟ */}
-        <Card className="border-emerald-900/50 bg-gradient-to-l from-emerald-950/30 to-zinc-900/40">
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-950 text-emerald-400 ring-1 ring-emerald-900">
-              <Sparkles className="h-5 w-5" />
+        {/* شريط الأرقام الرئيسي */}
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="الإحصاءات الرئيسية">
+          <LuxStat
+            icon={<Hash className="h-4 w-4" />}
+            title="مجموعات تحت المراقبة"
+            value={data?.monitored?.total != null ? fmt(data.monitored.total) : "—"}
+            sub={
+              newToday > 0 ? (
+                <span className="font-bold text-emerald-400">+{newToday} جديدة خلال 24 ساعة</span>
+              ) : (
+                <span>{data?.monitored?.awake ? "تحديث لحظي من البوت" : "آخر لقطة (البوت نائم)"}</span>
+              )
+            }
+            delay="lux-in-1"
+          >
+            <div className="mt-3">
+              <MiniHisto buckets={histo} />
+              <p className="mt-1 text-[10px] text-zinc-600">مواليد المجموعات — آخر 24 ساعة (الأحدث يمينًا)</p>
             </div>
-            <div className="space-y-1.5 text-sm leading-6">
-              <p className="font-extrabold text-emerald-300">هل يجب أن تكون الحسابات المراقبة متصلة بالإنترنت؟</p>
-              <p className="text-zinc-300">
-                نعم — السحب (الأحداث الحية + جولات الاستقصاء) وإعادة التوجيه كلاهما يتطلب أن يكون الحساب القارئ
-                متصلًا. لهذا يضم النظام الآن كل حساب مراقب متصل بـ
-                <span className="font-bold text-emerald-300"> جميع المجموعات المراقبة العامة</span> تدريجيًا وبسقف
-                يومي آمن — فيغطي أي حساب متصل أي مجموعة حتى لو انقطع حسابها الأصلي، والمجموعات الجديدة تُضم فور
-                اكتشافها بلا تكرار (معرّف فريد لكل مجموعة).
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+          </LuxStat>
 
-        {/* جدول الأسطول */}
-        <Card className="border-zinc-800 bg-zinc-900/40">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="flex items-center gap-2 text-base">
+          <LuxStat
+            icon={<Users className="h-4 w-4" />}
+            title="حسابات الأسطول"
+            value={
+              userClients ? (
+                <span className={cn(connectedCount >= Math.ceil(monitors.length / 2) ? "text-emerald-300" : "text-amber-300")}>
+                  {connectedCount}
+                </span>
+              ) : (
+                fmt(data?.stats?.connectedAccounts)
+              )
+            }
+            sub={
+              userClients ? (
+                <span>
+                  متصل الآن من {monitors.length}
+                  {offlineCount > 0 && <span className="text-amber-400/90"> · {offlineCount} غير متصل</span>}
+                </span>
+              ) : (
+                <span>متصل من {monitors.length} مراقب</span>
+              )
+            }
+            delay="lux-in-2"
+          >
+            <div className="mt-3 flex items-center gap-3">
+              <Ring value={connectedCount || (data?.stats?.connectedAccounts ?? 0)} max={monitors.length} label="الحسابات المتصلة" />
+              <div className="space-y-1 text-[11px] leading-4 text-zinc-500">
+                <p className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> متصل {connectedCount}
+                </p>
+                <p className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" /> غير متصل {offlineCount}
+                </p>
+                <p className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> غير محدد {unknownConn}
+                </p>
+              </div>
+            </div>
+          </LuxStat>
+
+          <LuxStat
+            icon={<CheckCircle2 className="h-4 w-4" />}
+            title="طلبات منشورة للقناة"
+            value={fmt(data?.filter?.accepted)}
+            sub={
+              <span>
+                من {fmt(data?.filter?.seen)} رسالة مفحوصة · {fmt(data?.filter?.rejected)} مرفوضة
+              </span>
+            }
+            delay="lux-in-3"
+          >
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-l from-emerald-400 to-emerald-600 transition-all duration-1000"
+                style={{
+                  width: `${
+                    data?.filter?.seen && data.filter.accepted != null && data.filter.seen > 0
+                      ? Math.max(0.5, (data.filter.accepted / data.filter.seen) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <p className="mt-1 text-[10px] text-zinc-600">نسبة القبول من إجمالي الفحص</p>
+          </LuxStat>
+
+          <LuxStat
+            icon={<Zap className="h-4 w-4" />}
+            title="انضمامات عبر الرابط"
+            value={fmt(joinTotal || null)}
+            sub={
+              <span>
+                فوري {fmt(join?.totals?.instant_joins ?? 0)} · بالكود {fmt(join?.totals?.otp_joins ?? 0)}
+              </span>
+            }
+            delay="lux-in-4"
+          >
+            <div className="mt-3 rounded-lg border border-emerald-900/40 bg-emerald-950/20 px-2.5 py-1.5 text-center">
+              <p className="text-sm font-extrabold text-emerald-300">{fmt(join?.totals?.groups_added ?? 0)}</p>
+              <p className="text-[10px] text-zinc-500">مجموعة دخلت المراقبة عبر المنضمين</p>
+            </div>
+          </LuxStat>
+        </section>
+
+        {/* تنبيه الحسابات غير المتصلة — الحقيقة كاملة */}
+        {userClients && offlineCount > 0 && (
+          <div className="lux-in flex items-start gap-3 rounded-2xl border border-amber-900/50 bg-gradient-to-l from-amber-950/25 to-transparent p-4">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-950/70 text-amber-400 ring-1 ring-amber-900/60">
+              <WifiOff className="h-4 w-4" />
+            </div>
+            <p className="text-sm leading-6 text-zinc-300">
+              <span className="font-extrabold text-amber-300">{offlineCount} حساب نشط غير متصل حاليًا</span> — مجموعاتها
+              لا تُقرأ منها الآن، لكن بقية الأسطول المتصلة تقرأ نفس المجموعات (نظام القراء المتعدد)، فالتغطية مستمرة.
+              الحسابات المعروفة بمشاكل اتصال دائمة تحتاج إعادة ربط عبر رابط الانضمام.
+            </p>
+          </div>
+        )}
+
+        {/* جدول الأسطول — الحالة الحقيقية */}
+        <section className="lux-card lux-in-2 overflow-hidden" aria-label="جدول الحسابات">
+          <div className="flex flex-col gap-3 border-b border-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-base font-extrabold">
                 <Users className="h-4 w-4 text-emerald-400" />
-                الحسابات المراقبة — مجموعات كل حساب
-              </CardTitle>
-              <Badge variant="outline" className="border-zinc-800 bg-black/30 text-zinc-400">
-                {monitors.length} مراقب · {joiners.length} فدائي · إجمالي القراءات {totalReader}
-              </Badge>
+                أسطول المراقبة
+                <span className="rounded-full bg-emerald-950/70 px-2 py-0.5 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-900/60">
+                  {monitors.length} مراقب · {joiners.length} فدائي
+                </span>
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">
+                حالة الاتصال حقيقية من البوت مباشرة — «يـراقب الآن» عدد المجموعات التي يقرأها فعليًا، و«اكتشف» مجموعات
+                دخلت النظام عن طريقه.
+              </p>
             </div>
-            <CardDescription>
-              «يـراقب» = مجموعات هو عضو فيها فعليًا ويقرأها (يتغير لحظيًا مع اكتشاف أي مجموعة جديدة). «اكتشف» =
-              مجموعات دخلت النظام عن طريقه.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[26rem] overflow-y-auto rounded-xl border border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-zinc-900/95 backdrop-blur">
-                  <tr className="border-b border-zinc-800 text-xs text-zinc-500">
-                    <th className="px-3 py-2.5 text-right font-medium">الحساب</th>
-                    <th className="px-3 py-2.5 text-center font-medium">الحالة</th>
-                    <th className="px-3 py-2.5 text-center font-medium">يـراقب الآن</th>
-                    <th className="px-3 py-2.5 text-center font-medium">اكتشف</th>
-                    <th className="px-3 py-2.5 text-center font-medium">الصحة</th>
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="ابحث باسم الحساب أو رقمه…"
+                className="h-10 border-white/10 bg-black/30 pr-9 text-sm"
+                aria-label="بحث في الحسابات"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-[28rem] overflow-auto rashq-scroll">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="sticky top-0 z-10 bg-zinc-950/95 backdrop-blur">
+                <tr className="border-b border-white/5 text-xs text-zinc-500">
+                  <th className="px-4 py-3 text-right font-medium">الحساب</th>
+                  <th className="px-3 py-3 text-center font-medium">الاتصال</th>
+                  <th className="px-3 py-3 text-center font-medium">يـراقب الآن</th>
+                  <th className="px-3 py-3 text-center font-medium">اكتشف</th>
+                  <th className="px-3 py-3 text-center font-medium">الصحة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-10 text-center text-zinc-500">
+                      {loading ? "جارٍ التحميل…" : "لا نتائج مطابقة للبحث"}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {sorted.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-8 text-center text-zinc-500">
-                        {loading ? "جارٍ التحميل من سوبابس…" : "لا حسابات مراقبة في الجدول"}
+                )}
+                {filtered.map((w) => {
+                  const counts = perPhone[w.phone];
+                  const bump = bumped[w.phone];
+                  const conn = connOf(w.phone);
+                  const offline = conn?.connected === false;
+                  return (
+                    <tr
+                      key={w.phone}
+                      className={cn(
+                        "border-b border-white/[0.04] transition-colors last:border-0 hover:bg-white/[0.03]",
+                        offline && "opacity-60",
+                        bump && "bg-emerald-950/40",
+                      )}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={cn(
+                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ring-1",
+                              conn?.connected === true
+                                ? "bg-emerald-950 text-emerald-400 ring-emerald-800/80"
+                                : conn?.connected === false
+                                  ? "bg-zinc-900 text-zinc-500 ring-zinc-800"
+                                  : "bg-zinc-900 text-zinc-400 ring-zinc-700",
+                            )}
+                          >
+                            {(w.displayName || "").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2) ||
+                              w.phone.replace(/\D/g, "").slice(-2)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-zinc-100">{w.displayName || "بدون اسم"}</p>
+                            <p dir="ltr" className="font-mono text-xs text-zinc-500">
+                              {w.phone}
+                            </p>
+                          </div>
+                        </div>
                       </td>
-                    </tr>
-                  )}
-                  {sorted.map((w) => {
-                    const counts = perPhone[w.phone];
-                    const bump = bumped[w.phone];
-                    return (
-                      <tr
-                        key={w.phone}
-                        className={cn(
-                          "border-b border-zinc-800/60 transition-colors last:border-0",
-                          bump ? "bg-emerald-950/40" : "hover:bg-zinc-900/60",
+                      <td className="px-3 py-3 text-center">
+                        {conn?.connected === true ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-800/70 bg-emerald-950/70 px-2.5 py-1 text-[11px] font-bold text-emerald-400">
+                            <Wifi className="h-3 w-3" />
+                            متصل الآن
+                          </span>
+                        ) : conn?.connected === false ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700/70 bg-zinc-900/70 px-2.5 py-1 text-[11px] font-bold text-zinc-400">
+                            <WifiOff className="h-3 w-3" />
+                            غير متصل
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1.5 rounded-full border border-amber-800/60 bg-amber-950/50 px-2.5 py-1 text-[11px] font-bold text-amber-400"
+                            title={userClients ? "تعذر تحديد حالة هذا الحساب من البوت" : "فحص حالة الاتصال غير متاح الآن"}
+                          >
+                            <HelpCircle className="h-3 w-3" />
+                            غير محدد
+                          </span>
                         )}
-                      >
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-2">
+                        {conn && !conn.exact && conn.connected !== null && (
+                          <span className="mt-1 block text-[10px] text-zinc-600" title="رقمان متشابهان — الحالة غير قطعية">
+                            مطابقة تقريبية
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span
+                          className={cn(
+                            "text-xl font-black",
+                            bump ? "text-emerald-300" : counts?.reader ? "text-emerald-400" : "text-zinc-600",
+                          )}
+                        >
+                          {counts?.reader ?? 0}
+                        </span>
+                        {bump ? (
+                          <span className="mr-1 animate-bounce text-xs font-black text-emerald-300">+{bump}</span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-3 text-center font-bold text-zinc-400">{counts?.discovered ?? 0}</td>
+                      <td className="px-3 py-3">
+                        <div className="mx-auto w-16">
+                          <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
                             <div
                               className={cn(
-                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold",
-                                w.isActive
-                                  ? "bg-emerald-950 text-emerald-400 ring-1 ring-emerald-900"
-                                  : "bg-zinc-900 text-zinc-500 ring-1 ring-zinc-800",
+                                "h-full rounded-full transition-all duration-700",
+                                (w.healthScore ?? 100) >= 70
+                                  ? "bg-emerald-500"
+                                  : (w.healthScore ?? 100) >= 40
+                                    ? "bg-amber-500"
+                                    : "bg-red-500",
                               )}
-                            >
-                              {(w.displayName || "").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2) ||
-                                w.phone.replace(/\D/g, "").slice(-2)}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-bold text-zinc-200">{w.displayName || "بدون اسم"}</p>
-                              <p dir="ltr" className="font-mono text-xs text-zinc-500">
-                                {w.phone}
-                              </p>
-                            </div>
+                              style={{ width: `${Math.max(3, w.healthScore ?? 100)}%` }}
+                            />
                           </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          {w.isActive ? (
-                            <Badge variant="outline" className="border-emerald-900 bg-emerald-950 text-emerald-400">
-                              نشط
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="border-amber-900 bg-amber-950 text-amber-400">
-                              موقوف
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span
-                            className={cn(
-                              "text-xl font-extrabold",
-                              bump ? "text-emerald-300" : counts?.reader ? "text-emerald-400" : "text-zinc-600",
-                            )}
-                          >
-                            {counts?.reader ?? 0}
-                          </span>
-                          {bump ? (
-                            <span className="mr-1 animate-bounce text-xs font-extrabold text-emerald-300">+{bump}</span>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-2.5 text-center text-zinc-400">{counts?.discovered ?? 0}</td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span
-                            className={cn(
-                              "font-bold",
-                              (w.healthScore ?? 100) >= 70
-                                ? "text-emerald-400"
-                                : (w.healthScore ?? 100) >= 40
-                                  ? "text-amber-400"
-                                  : "text-red-400",
-                            )}
-                          >
-                            {w.healthScore ?? "—"}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+                          <p className="mt-1 text-[10px] font-bold text-zinc-500">{w.healthScore ?? "—"}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* المجموعات المكتشفة حديثًا */}
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
+        {/* عمودان: الاكتشافات الحية + الأرشيف */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <section className="lux-card lux-in-3 p-4" aria-label="أحدث المجموعات">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-base font-extrabold">
                 <Globe2 className="h-4 w-4 text-emerald-400" />
                 مجموعات اكتُشفت خلال 24 ساعة
-              </CardTitle>
-              <CardDescription>تظهر لحظة بلحظة — كل مجموعة جديدة يكتشفها أي حساب مراقب</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {(data?.monitored?.recentGroups?.length ?? 0) === 0 ? (
-                <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500">
-                  {loading ? "جارٍ التحميل…" : "لا مجموعات جديدة في آخر 24 ساعة"}
-                </p>
-              ) : (
-                <ul className="max-h-96 space-y-1.5 overflow-y-auto pl-1" dir="rtl">
-                  {data?.monitored?.recentGroups.map((r) => (
-                    <li
-                      key={r.chatId}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800/70 bg-black/20 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-zinc-200">{r.title || `مجموعة ${r.chatId}`}</p>
-                        <p className="mt-0.5 text-xs text-zinc-500">
-                          عبر <span dir="ltr" className="font-mono">{r.by || "؟"}</span>
-                          {r.readers > 0 && <> · يقرأها {r.readers} حساب</>}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-xs text-zinc-500">{timeAgo(r.at)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+              </h2>
+              <span className="rounded-full bg-emerald-950/70 px-2 py-0.5 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-900/60">
+                {newToday} جديدة
+              </span>
+            </div>
+            {(data?.monitored?.recentGroups?.length ?? 0) === 0 ? (
+              <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-10 text-center text-sm text-zinc-500">
+                {loading ? "جارٍ التحميل…" : "لا مجموعات جديدة في آخر 24 ساعة"}
+              </p>
+            ) : (
+              <ul className="max-h-96 space-y-1.5 overflow-y-auto rashq-scroll pl-1" dir="rtl">
+                {data?.monitored?.recentGroups.map((r) => (
+                  <li
+                    key={r.chatId}
+                    className="group flex items-center justify-between gap-2 rounded-xl border border-white/[0.05] bg-black/25 px-3 py-2 transition-colors hover:border-emerald-900/50 hover:bg-emerald-950/20"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-zinc-200">{r.title || `مجموعة ${r.chatId}`}</p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        عبر <span dir="ltr" className="font-mono">{r.by || "؟"}</span>
+                        {r.readers > 0 && <> · يقرأها {r.readers} حساب</>}
+                        {r.username && (
+                          <>
+                            {" · "}
+                            <span dir="ltr" className="font-mono text-zinc-600">
+                              @{r.username}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs text-zinc-500">{timeAgo(r.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-          {/* آخر الروابط المؤرشفة */}
-          <Card className="border-zinc-800 bg-zinc-900/40">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
+          <section className="lux-card lux-in-4 p-4" aria-label="أرشيف الروابط">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-base font-extrabold">
                 <Link2 className="h-4 w-4 text-emerald-400" />
-                آخر الروابط — أرشيف النسخة السابقة
-              </CardTitle>
-              <CardDescription>بيانات تاريخية من جدول links — للمرجع فقط</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {(data?.recentLinks?.length ?? 0) === 0 ? (
-                <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500">
-                  {loading ? "جارٍ التحميل…" : "لا روابط بعد"}
-                </p>
-              ) : (
-                <div className="max-h-96 overflow-y-auto rounded-xl border border-zinc-800">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur">
-                      <tr className="border-b border-zinc-800 text-xs text-zinc-500">
-                        <th className="px-3 py-2 text-right font-medium">المجموعة</th>
-                        <th className="px-3 py-2 text-right font-medium">النوع</th>
-                        <th className="px-3 py-2 text-left font-medium">الوقت</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data?.recentLinks?.map((l) => (
-                        <tr key={l.id} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-900/60">
-                          <td className="max-w-40 px-3 py-2">
-                            <p className="truncate text-zinc-200" title={l.group}>
-                              {l.group || "—"}
-                            </p>
-                            <p className="truncate text-xs text-zinc-500" title={l.link} dir="ltr">
-                              {l.link.length > 34 ? l.link.slice(0, 34) + "…" : l.link}
-                            </p>
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                l.type === "whatsapp"
-                                  ? "border-emerald-900 bg-emerald-950 text-emerald-400"
-                                  : "border-sky-900 bg-sky-950 text-sky-300",
-                              )}
-                            >
-                              {l.type === "whatsapp" ? "واتساب" : l.type === "telegram" ? "تيليجرام" : l.type || "؟"}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 text-xs text-zinc-500">{timeAgo(l.at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                أرشيف الروابط التاريخي
+              </h2>
+              {data?.linksTotal != null && (
+                <span className="rounded-full bg-zinc-900 px-2 py-0.5 text-[11px] font-bold text-zinc-400 ring-1 ring-zinc-800">
+                  {fmt(data.linksTotal)} رابط
+                </span>
               )}
-            </CardContent>
-          </Card>
+            </div>
+            <p className="mb-2 text-[11px] leading-4 text-zinc-600">
+              إرث النسخة السابقة (قبل إيقاف مسار الروابط) — يُعرض للمرجع فقط.
+            </p>
+            {(data?.recentLinks?.length ?? 0) === 0 ? (
+              <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-10 text-center text-sm text-zinc-500">
+                {loading ? "جارٍ التحميل…" : "لا روابط"}
+              </p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto rashq-scroll rounded-xl border border-white/[0.05]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-zinc-950/95 backdrop-blur">
+                    <tr className="border-b border-white/5 text-xs text-zinc-500">
+                      <th className="px-3 py-2 text-right font-medium">المجموعة</th>
+                      <th className="px-3 py-2 text-right font-medium">النوع</th>
+                      <th className="px-3 py-2 text-left font-medium">الوقت</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data?.recentLinks?.map((l) => (
+                      <tr key={l.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.03]">
+                        <td className="max-w-40 px-3 py-2">
+                          <p className="truncate text-zinc-200" title={l.group}>
+                            {l.group || "—"}
+                          </p>
+                          <p className="truncate text-xs text-zinc-600" title={l.link} dir="ltr">
+                            {l.link.length > 34 ? l.link.slice(0, 34) + "…" : l.link}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              l.type === "whatsapp"
+                                ? "border-emerald-900 bg-emerald-950 text-emerald-400"
+                                : "border-teal-900 bg-teal-950/60 text-teal-300",
+                            )}
+                          >
+                            {l.type === "whatsapp" ? "واتساب" : l.type === "telegram" ? "تيليجرام" : l.type || "؟"}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-zinc-500">{timeAgo(l.at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
 
+        {/* فلسفة التغطية */}
+        <section className="lux-card lux-in-5 flex flex-col gap-3 p-4 sm:flex-row sm:items-start" aria-label="كيف تعمل التغطية">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-950/70 text-emerald-400 ring-1 ring-emerald-900/70">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div className="space-y-1.5 text-sm leading-7">
+            <p className="font-extrabold text-emerald-300">كيف تبقى التغطية شاملة حتى مع انقطاع حسابات؟</p>
+            <p className="text-zinc-300">
+              كل حساب مراقب متصل يُضم تدريجيًا إلى{" "}
+              <span className="font-bold text-emerald-300">جميع المجموعات المراقبة العامة</span> بسقف يومي آمن — فيغطي
+              أي حساب متصل أي مجموعة حتى لو انقطع حسابها الأصلي، والمجموعات الجديدة تُضم فور اكتشافها بلا تكرار
+              (معرّف فريد لكل مجموعة). لهذا انقطاع حساب لا يعني فقدان مجموعاته.
+            </p>
+          </div>
+        </section>
+
         {/* رابط الانضمام */}
-        <Card className="border-zinc-800 bg-zinc-900/40">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
+        <section className="lux-card lux-in-5 p-4" aria-label="رابط التسجيل العام">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-base font-extrabold">
               <Phone className="h-4 w-4 text-emerald-400" />
               رابط التسجيل العام للمشاركة
-            </CardTitle>
-            <CardDescription>
-              شاركه مع أي أحد: الحسابات المراقبة تنضم فورًا، والجدد يتحققون بالكود — وهذه الصفحة نفسها (قبل فتح
-              القفل) هي ما يراه أي أحد يفتح الرابط.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black/30 px-3 py-2.5">
-                <span dir="ltr" className="truncate font-mono text-xs text-emerald-300 sm:text-sm">
-                  https://whatsapp-userbot-e3fy2.onrender.com/join
-                </span>
-              </div>
+            </h2>
+            <span className="rounded-full bg-emerald-950/70 px-2 py-0.5 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-900/60">
+              {joinTotal} منضم حتى الآن
+            </span>
+          </div>
+          <p className="mb-3 text-xs leading-5 text-zinc-500">
+            شاركه مع أي أحد: الحسابات المراقبة تنضم فورًا، والجدد يتحققون بكود تيليجرام وتُضم مجموعاتهم للمراقبة
+            تلقائيًا.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 items-center rounded-xl border border-emerald-900/40 bg-black/40 px-3 py-2.5 lux-shimmer">
+              <span dir="ltr" className="truncate font-mono text-xs text-emerald-300 sm:text-sm">
+                https://whatsapp-userbot-e3fy2.onrender.com/join
+              </span>
+            </div>
+            <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -1168,22 +1432,27 @@ function FleetDashboard({ onRelock }: { onRelock: () => void }) {
                 href="https://whatsapp-userbot-e3fy2.onrender.com/join"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-900 bg-emerald-950 px-4 py-2 text-sm font-bold text-emerald-300 transition hover:bg-emerald-900/60"
+                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-600"
               >
                 <ExternalLink className="h-4 w-4" />
                 معاينة
               </a>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </main>
 
       {/* التذييل اللاصق */}
-      <footer className="mt-auto border-t border-zinc-800/80 bg-zinc-950/90 backdrop-blur">
+      <footer className="mt-auto border-t border-white/5 bg-zinc-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-4 text-xs text-zinc-500 sm:flex-row">
           <span className="flex items-center gap-1.5">
             <Activity className="h-3.5 w-3.5 text-emerald-500" />
-            لوحة المراقبة · سوبابس + البوت الحي · آخر تحديث {data ? timeAgo(data.fetchedAt) : "…"}
+            غرفة عمليات المراقبة · آخر تحديث {data ? timeAgo(data.fetchedAt) : "…"}
+            {data?.gitCommit && (
+              <span dir="ltr" className="font-mono text-zinc-700">
+                {data.gitCommit.slice(0, 7)}
+              </span>
+            )}
           </span>
           <button
             type="button"

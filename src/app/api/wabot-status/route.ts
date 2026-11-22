@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // الخدمة الحية بعد ترحيل 2026-11-20 هي whatsapp-userbot-e3fy2.
 // الافتراضي القديم كان um-raham-bot (موقوف الآن من المالك) فتظهر لوحة
-// الحالة بيانات خدمة ميتة — الترتيب: RENDER_SERVICE_URL ثم E3FY2_SERVICE_URL
-// ثم النطاق الحي مباشرة.
-const SERVICE_URL = (
-  process.env.RENDER_SERVICE_URL ||
-  process.env.E3FY2_SERVICE_URL ||
-  "https://whatsapp-userbot-e3fy2.onrender.com"
-).replace(/\/$/, "");
+// الحالة بيانات خدمة ميتة — الإعداد الوحيد: E3FY2_SERVICE_URL
+// (حذفنا أولوية RENDER_SERVICE_URL نهائيًا: لو بقيت قيمة قديمة في
+//  متغيرات بيئة Vercel فستتجاهلها الواجهة ولن تعود تقيس الخدمة الميتة)
+const SERVICE_URL = (process.env.E3FY2_SERVICE_URL || "https://whatsapp-userbot-e3fy2.onrender.com").replace(/\/$/, "");
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const SUPA_BASE = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const SUPA_KEY = process.env.SUPABASE_SERVICE_KEY || "";
